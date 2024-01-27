@@ -202,23 +202,12 @@ impl Huffman {
                 tnode.borrow_mut().right = None;
 
                 if let Some(parent) = lhead.borrow_mut().parent.clone() {
-                    let is_left_child;
-                    {
-                        // Limiting the scope of the first mutable borrow
-                        let parent_borrow = parent.borrow();
-                        if let Some(left) = parent_borrow.left.clone() {
-                            is_left_child = Rc::ptr_eq(&left, &lhead);
+                    if let Some(left) = parent.borrow().left.clone() {
+                        if Rc::ptr_eq(&left, &lhead) {
+                            parent.borrow_mut().left = Some(tnode2.clone());
                         } else {
-                            is_left_child = false; // or handle this case as needed
+                            parent.borrow_mut().right = Some(tnode2.clone());
                         }
-                    } // The mutable borrow ends here
-
-                    // Now it's safe to borrow parent mutably again
-                    let mut parent_borrow_mut = parent.borrow_mut();
-                    if is_left_child {
-                        parent_borrow_mut.left = Some(tnode2.clone());
-                    } else {
-                        parent_borrow_mut.right = Some(tnode2.clone());
                     }
                 } else {
                     self.tree = Some(tnode2.clone());
@@ -253,26 +242,11 @@ impl Huffman {
                 }
             }
 
-            // if let Some(prev) = node.borrow_mut().prev.clone() {
-            //     if prev.borrow().weight == node.borrow().weight {
-            //         node.borrow_mut().head = Some(prev.clone());
-            //     } else {
-            //         node.borrow_mut().head = None;
-            //     }
-            // }
-
-            let prev_clone = node.borrow().prev.clone();
-
-            if let Some(prev) = prev_clone {
-                // Determine the condition outside of the mutable borrow of node
-                let should_link_to_prev = prev.borrow().weight == node.borrow().weight;
-
-                // Now perform the mutable borrow once
-                let mut node_borrow_mut = node.borrow_mut();
-                if should_link_to_prev {
-                    node_borrow_mut.head = Some(prev);
+            if let Some(prev) = node.borrow_mut().prev.clone() {
+                if prev.borrow().weight == node.borrow().weight {
+                    node.borrow_mut().head = Some(prev.clone());
                 } else {
-                    node_borrow_mut.head = None;
+                    node.borrow_mut().head = None;
                 }
             }
 
