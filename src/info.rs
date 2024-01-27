@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::Display};
+use std::collections::HashMap;
 
 pub struct Info {
     keys: HashMap<String, String>,
@@ -12,7 +12,7 @@ impl Info {
     }
 
     pub fn set_value_for_key(&mut self, key: &str, value: &str) {
-        if (key.contains("\\") || value.contains("\\")) {
+        if key.contains("\\") || value.contains("\\") {
             panic!("Key or value contains a backslash");
         }
 

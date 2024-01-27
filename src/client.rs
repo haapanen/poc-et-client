@@ -1,5 +1,3 @@
-use std::net::UdpSocket;
-
 use crate::{
     info::Info,
     net::{Net, OOB_PREFIX},
