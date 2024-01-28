@@ -34,10 +34,6 @@ impl Net {
     }
 
     pub fn send_out_of_band_data(&self, data: &[u8]) -> Result<(), std::io::Error> {
-        Huffman::new().adaptive_encode("Hello, world!".as_bytes());
-
-        let data = [&OOB_PREFIX, Huffman::new().adaptive_encode(data).as_slice()].concat();
-
         let bytes_written = self.socket.send_to(&data, &self.hostname)?;
 
         println!("Sent {} bytes", bytes_written);

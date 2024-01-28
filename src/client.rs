@@ -1,4 +1,5 @@
 use crate::{
+    huffman::Huffman,
     info::Info,
     net::{Net, OOB_PREFIX},
 };
@@ -57,10 +58,27 @@ impl Client {
         info.set_value_for_key("qport", self.hostname.split(':').nth(1).unwrap());
         info.set_value_for_key("challenge", &self.challenge.to_string());
 
-        let packet = format!("connect \"{}\"", info.serialize());
+        let tempInfoString = "\"\\g_password\\none\\cl_anonymous\\0\\snaps\\20\\rate\\25000\\name\\^7999zero\\cl_wwwDownload\\1\\protocol\\84\\qport\\31415\\challenge\\1234567\"".as_bytes();
+
+        println!("len: {}", tempInfoString.len());
+
+        let packet = [
+            &OOB_PREFIX,
+            "connect ".as_bytes(),
+            Huffman::new()
+                // .adaptive_compress(info.serialize().as_bytes())
+                .adaptive_compress("\"\\g_password\\none\\cl_anonymous\\0\\snaps\\20\\rate\\25000\\name\\^7999zero\\cl_wwwDownload\\1\\protocol\\84\\qport\\31415\\challenge\\1234567\"".as_bytes())
+                .as_slice(),
+        ]
+        .concat();
 
         if let Some(net) = &self.net {
-            net.send_out_of_band_data(packet.as_bytes())?;
+            net.send_out_of_band_data(&packet)?;
+
+            let data = net.receive()?;
+
+            println!("Received {} bytes", data.len());
+            println!("{}", String::from_utf8_lossy(&data));
         }
 
         Ok(())

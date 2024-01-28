@@ -1,136 +1,172 @@
-use std::{
-    cell::RefCell,
-    fmt::{Debug, Formatter},
-    rc::Rc,
-};
+use std::path::Display;
 
-const HMAX: usize = 256;
-const NYT: usize = HMAX;
-const INTERNAL_NODE: usize = HMAX + 1;
+const MAX_SYMBOLS: usize = 256;
+const NYT: usize = MAX_SYMBOLS; // not yet transmitted
+const INTERNAL_NODE: usize = MAX_SYMBOLS + 1;
+const MAX_NODES: usize = 2 * MAX_SYMBOLS;
 
-#[derive(Clone)]
-struct Node {
-    left: Option<Rc<RefCell<Node>>>,
-    right: Option<Rc<RefCell<Node>>>,
-    parent: Option<Rc<RefCell<Node>>>,
-    next: Option<Rc<RefCell<Node>>>,
-    prev: Option<Rc<RefCell<Node>>>,
-    head: Option<Rc<RefCell<Node>>>,
-    weight: u32,
-    symbol: u32,
-}
+#[derive(Debug, Clone, Copy)]
+pub struct Node {
+    pub weight: usize,
+    pub symbol: usize,
 
-impl Debug for Node {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "({}, {})", self.symbol, self.weight)
-    }
+    pub parent: *mut Node,
+    pub left: *mut Node,
+    pub right: *mut Node,
+    pub next: *mut Node,
+    pub prev: *mut Node,
+    pub head: *mut *mut Node,
 }
 
 impl Node {
-    fn new_ref() -> Rc<RefCell<Node>> {
-        Rc::new(RefCell::new(Node {
-            left: None,
-            right: None,
-            parent: None,
-            next: None,
-            prev: None,
-            head: None,
+    fn new() -> Self {
+        Node {
             weight: 0,
             symbol: 0,
-        }))
+            parent: std::ptr::null_mut(),
+            left: std::ptr::null_mut(),
+            right: std::ptr::null_mut(),
+            next: std::ptr::null_mut(),
+            prev: std::ptr::null_mut(),
+            head: std::ptr::null_mut(),
+        }
+    }
+}
+
+fn print_node(node: *const Node) {
+    if node.is_null() {
+        println!("node is null");
+        return;
+    }
+
+    unsafe {
+        println!(
+            "Node {} at {:p} has weight {}",
+            (*node).symbol,
+            node,
+            (*node).weight
+        );
+        println!(
+            "left: {:p} right: {:p} parent: {:p} next: {:p} prev: {:p} head: {:p}",
+            (*node).left,
+            (*node).right,
+            (*node).parent,
+            (*node).next,
+            (*node).prev,
+            (*node).head
+        );
+    }
+}
+
+fn print_node_ptr(node: *mut *mut Node) {
+    unsafe {
+        println!("node ptr: {:p}", node);
+    }
+}
+
+fn print_nodes(nodes: [Node; MAX_NODES], len: usize) {
+    for node in nodes[..len].iter() {
+        unsafe {
+            print_node(node as *const Node);
+        }
     }
 }
 
 pub struct Huffman {
-    tree: Option<Rc<RefCell<Node>>>,
-    lhead: Option<Rc<RefCell<Node>>>,
-    ltail: Option<Rc<RefCell<Node>>>,
-    loc: [Option<Rc<RefCell<Node>>>; HMAX + 1],
+    nodes: [Node; MAX_NODES],
+    next_free_node_index: usize,
+    node_ptrs: [*mut Node; MAX_NODES],
+    next_free_node_ptr_index: usize,
 
-    bloc: u32,
+    freed_pp_nodes: Vec<*mut *mut Node>,
+
+    tree: *mut Node,
+    lhead: *mut Node,
+    ltail: *mut Node,
+    symbols: [*mut Node; MAX_SYMBOLS + 1],
+
+    bloc: usize,
 }
 
-const ARRAY_REPEAT_VALUE: std::option::Option<std::rc::Rc<std::cell::RefCell<Node>>> = None;
-
 impl Huffman {
-    pub fn new() -> Huffman {
-        Self {
-            tree: None,
-            lhead: None,
-            ltail: None,
-            loc: [ARRAY_REPEAT_VALUE; HMAX + 1],
+    pub fn new() -> Self {
+        Huffman {
+            nodes: [Node::new(); MAX_NODES],
+            next_free_node_index: 0,
+            node_ptrs: [std::ptr::null_mut(); MAX_NODES],
+            next_free_node_ptr_index: 0,
+            freed_pp_nodes: Vec::new(),
+            tree: std::ptr::null_mut(),
+            lhead: std::ptr::null_mut(),
+            ltail: std::ptr::null_mut(),
+            symbols: [std::ptr::null_mut(); MAX_SYMBOLS + 1],
             bloc: 0,
         }
     }
 
-    pub fn adaptive_encode(&mut self, data: &[u8]) -> Vec<u8> {
-        if data.is_empty() {
-            return vec![];
+    pub fn adaptive_compress(&mut self, input: &[u8]) -> Vec<u8> {
+        let mut result: [u8; 65536] = [0; 65536];
+
+        unsafe {
+            let mut node = self.get_free_node();
+            self.tree = node;
+            self.lhead = node;
+            self.symbols[NYT] = node;
+
+            (*node).symbol = NYT;
+            (*node).weight = 0;
+            (*self.lhead).next = std::ptr::null_mut();
+            (*self.lhead).prev = std::ptr::null_mut();
+            (*self.tree).parent = std::ptr::null_mut();
+            (*self.tree).left = std::ptr::null_mut();
+            (*self.tree).right = std::ptr::null_mut();
+            self.symbols[NYT] = self.tree;
         }
 
-        let head = Node::new_ref();
-
-        self.tree = Some(head.clone());
-        self.lhead = Some(head.clone());
-        self.loc[NYT] = Some(head.clone());
-
-        head.borrow_mut().symbol = NYT as u32;
-        head.borrow_mut().weight = 0;
-        head.borrow_mut().next = None;
-        head.borrow_mut().prev = None;
-        head.borrow_mut().left = None;
-        head.borrow_mut().right = None;
-        head.borrow_mut().parent = None;
-        self.loc[NYT] = self.tree.clone();
-
-        let mut result: [u8; 65536] = [0; 65536];
-        result[0] = (data.len() >> 8) as u8;
-        result[1] = (data.len() & 0xff) as u8;
+        result[0] = (input.len() >> 8) as u8;
+        result[1] = (input.len() & 0xFF) as u8;
 
         self.bloc = 16;
 
-        for byte in data {
-            self.transmit((*byte) as u32, &mut result);
-            self.add_ref(*byte as u32);
+        for &byte in input {
+            self.transmit(byte as u32, &mut result);
+            self.add_ref(byte as u32);
         }
 
-        result[..self.bloc as usize].to_vec()
+        println!("result: {:?}", result[..(self.bloc >> 3)].to_vec());
+
+        result[..(self.bloc >> 3)].to_vec()
     }
 
-    fn transmit(&mut self, symbol: u32, result: &mut [u8; 65536]) {
-        match self.loc[symbol as usize].clone() {
-            Some(node) => {
-                self.send(node.clone(), None, result);
-            }
-            None => {
-                self.transmit(NYT as u32, result);
-                for i in (0..8).rev() {
-                    self.add_bit((symbol >> i) & 0x1, result);
-                }
-            }
+    fn get_free_node(&mut self) -> *mut Node {
+        let node = &mut self.nodes[self.next_free_node_index] as *mut Node;
+        self.next_free_node_index += 1;
+        node
+    }
+
+    fn get_free_pp_node(&mut self) -> *mut *mut Node {
+        if self.freed_pp_nodes.is_empty() {
+            let node = &mut self.node_ptrs[self.next_free_node_ptr_index];
+            self.next_free_node_ptr_index += 1;
+            node
+        } else {
+            self.freed_pp_nodes.pop().unwrap()
         }
     }
 
-    fn send(
-        &mut self,
-        node: Rc<RefCell<Node>>,
-        child: Option<Rc<RefCell<Node>>>,
-        result: &mut [u8; 65536],
-    ) {
-        let parent = node.borrow_mut().parent.clone();
-        if let Some(parent) = parent {
-            self.send(parent.clone(), Some(node.clone()), result);
-        }
+    fn free_node(&mut self, node: *mut *mut Node) {
+        self.freed_pp_nodes.push(node);
+    }
 
-        if let Some(child) = child {
-            let right = node.borrow().right.clone();
-            let is_right_child = Huffman::is_same_node(right, Some(child));
+    fn transmit(&mut self, byte: u32, result: &mut [u8; 65536]) {
+        if self.symbols[byte as usize].is_null() {
+            self.transmit(NYT as u32, result);
 
-            if is_right_child {
-                self.add_bit(1, result);
-            } else {
-                self.add_bit(0, result);
+            for i in (0..8).rev() {
+                self.add_bit((byte >> i) & 0x1, result);
             }
+        } else {
+            self.send(self.symbols[byte as usize], std::ptr::null_mut(), result);
         }
     }
 
@@ -140,278 +176,210 @@ impl Huffman {
         self.bloc += 1;
 
         if x == 0 {
-            result[y as usize] = 0;
+            result[y] = 0;
         }
-        result[y as usize] |= (bit << x) as u8;
+
+        result[y] |= (bit << x) as u8;
     }
 
-    fn add_ref(&mut self, symbol: u32) {
-        if let Some(node) = self.loc[symbol as usize].clone() {
-            self.increment(Some(node.clone()));
-        } else {
-            let mut tnode = Node::new_ref();
-            let mut tnode2 = Node::new_ref();
-
-            tnode2.borrow_mut().symbol = INTERNAL_NODE as u32;
-            tnode2.borrow_mut().weight = 1;
-            tnode2.borrow_mut().next = self.lhead.as_mut().unwrap().borrow_mut().next.clone();
-
-            if let Some(next) = self.lhead.as_mut().unwrap().borrow_mut().next.clone() {
-                next.borrow_mut().prev = Some(tnode2.clone());
-
-                let weight = next.borrow_mut().weight;
-
-                let next_head = next.as_ref().borrow_mut().head.clone();
-
-                if weight == 1 {
-                    tnode2.borrow_mut().head = next.borrow_mut().head.clone();
-                } else {
-                    tnode2.borrow_mut().head = Some(tnode2.clone());
-                }
-            } else {
-                tnode2.borrow_mut().head = Some(tnode2.clone());
+    fn send(&mut self, node: *mut Node, child: *mut Node, result: &mut [u8; 65536]) {
+        unsafe {
+            if !(*node).parent.is_null() {
+                self.send((*node).parent, node, result);
             }
 
-            if let Some(lhead) = self.lhead.clone() {
-                lhead.borrow_mut().next = Some(tnode2.clone());
-                tnode2.borrow_mut().prev = Some(lhead.clone());
+            if !child.is_null() {
+                if (*node).left == child {
+                    self.add_bit(0, result);
+                } else {
+                    self.add_bit(1, result);
+                }
+            }
+        }
+    }
 
-                let lhead_next = lhead.borrow_mut().next.clone();
+    fn add_ref(&mut self, byte: u32) {
+        if self.symbols[byte as usize].is_null() {
+            unsafe {
+                let tnode = self.get_free_node();
+                let tnode2 = self.get_free_node();
 
-                tnode.borrow_mut().symbol = symbol;
-                tnode.borrow_mut().weight = 1;
-                tnode.borrow_mut().next = lhead.borrow_mut().next.clone();
+                (*tnode2).symbol = INTERNAL_NODE;
+                (*tnode2).weight = 1;
+                (*tnode2).next = (*self.lhead).next;
 
-                if let Some(next) = lhead.borrow_mut().next.clone() {
-                    next.borrow_mut().prev = Some(tnode.clone());
-                    if next.as_ref().borrow().weight == 1 {
-                        tnode.borrow_mut().head = next.as_ref().borrow_mut().head.clone();
+                if !(*self.lhead).next.is_null() {
+                    (*(*self.lhead).next).prev = tnode2;
+
+                    if (*(*self.lhead).next).weight == 1 {
+                        (*tnode2).head = (*(*self.lhead).next).head;
                     } else {
-                        tnode.borrow_mut().head = Some(tnode2.clone());
+                        (*tnode2).head = self.get_free_pp_node();
+                        let head = (*tnode2).head;
+                        (*(*(*head)).head) = tnode2;
                     }
                 } else {
-                    tnode.borrow_mut().head = Some(tnode.clone());
+                    (*tnode2).head = self.get_free_pp_node();
+                    *(*tnode2).head = tnode2;
                 }
 
-                lhead.borrow_mut().next = Some(tnode.clone());
-                tnode.borrow_mut().prev = Some(lhead.clone());
-                tnode.borrow_mut().left = None;
-                tnode.borrow_mut().right = None;
+                (*self.lhead).next = tnode2;
+                (*tnode2).prev = self.lhead;
 
-                if let Some(parent) = lhead.borrow_mut().parent.clone() {
-                    let is_left_child;
-                    {
-                        // Limiting the scope of the first mutable borrow
-                        let parent_borrow = parent.borrow();
-                        if let Some(left) = parent_borrow.left.clone() {
-                            is_left_child = Rc::ptr_eq(&left, &lhead);
-                        } else {
-                            is_left_child = false; // or handle this case as needed
-                        }
-                    } // The mutable borrow ends here
+                (*tnode).symbol = byte as usize;
+                (*tnode).weight = 1;
+                (*tnode).next = (*self.lhead).next;
 
-                    // Now it's safe to borrow parent mutably again
-                    let mut parent_borrow_mut = parent.borrow_mut();
-                    if is_left_child {
-                        parent_borrow_mut.left = Some(tnode2.clone());
+                if !(*self.lhead).next.is_null() {
+                    (*(*self.lhead).next).prev = tnode;
+
+                    if (*(*self.lhead).next).weight == 1 {
+                        (*tnode).head = (*(*self.lhead).next).head;
                     } else {
-                        parent_borrow_mut.right = Some(tnode2.clone());
+                        (*tnode).head = self.get_free_pp_node();
+                        *(*tnode).head = tnode2;
                     }
                 } else {
-                    self.tree = Some(tnode2.clone());
+                    (*tnode).head = self.get_free_pp_node();
+                    *(*tnode).head = tnode2;
                 }
 
-                tnode2.borrow_mut().right = Some(tnode.clone());
-                tnode2.borrow_mut().left = Some(lhead.clone());
+                (*self.lhead).next = tnode;
+                (*tnode).prev = self.lhead;
+                (*tnode).left = std::ptr::null_mut();
+                (*tnode).right = std::ptr::null_mut();
 
-                tnode2.borrow_mut().parent = lhead.borrow_mut().parent.clone();
-                lhead.borrow_mut().parent = Some(tnode2.clone());
-                tnode.borrow_mut().parent = Some(tnode2.clone());
-
-                self.loc[symbol as usize] = Some(tnode.clone());
-
-                let parent_clone = tnode.borrow_mut().parent.clone();
-
-                self.increment(tnode2.borrow_mut().parent.clone());
-            }
-        }
-    }
-
-    fn increment(&mut self, node: Option<Rc<RefCell<Node>>>) {
-        let mut lnode: Option<Rc<RefCell<Node>>> = None;
-
-        if let Some(node) = node.clone() {
-            let next_clone = node.borrow().next.clone();
-
-            if let Some(next) = next_clone {
-                // Check the condition outside of the mutable borrow of 'node'
-                let are_weights_equal = node.borrow().weight == next.borrow().weight;
-
-                if are_weights_equal {
-                    // Perform mutable actions in a separate scope
-                    let mut node_borrow_mut = node.borrow_mut();
-                    let lnode = node_borrow_mut.head.clone();
-                    drop(node_borrow_mut); // Explicitly drop the mutable borrow
-
-                    let node_parent = node.borrow().parent.clone();
-
-                    // Check if Huffman::is_same_node requires borrowing 'node'
-                    // If so, you need to ensure it's done outside of any 'node' borrows
-                    if Huffman::is_same_node(lnode.clone(), node_parent) {
-                        self.swap(lnode.clone(), Some(node.clone()));
+                if !(*self.lhead).parent.is_null() {
+                    if (*(*self.lhead).parent).left == self.lhead {
+                        (*(*self.lhead).parent).left = tnode2;
+                    } else {
+                        (*(*self.lhead).parent).right = tnode2;
                     }
-
-                    self.swap_list(lnode, Some(node.clone()));
-                }
-            }
-
-            let prev_clone = node.borrow().prev.clone();
-
-            if let Some(prev) = prev_clone {
-                // Determine the condition outside of the mutable borrow of node
-                let should_link_to_prev = prev.borrow().weight == node.borrow().weight;
-
-                // Now perform the mutable borrow once
-                let mut node_borrow_mut = node.borrow_mut();
-                if should_link_to_prev {
-                    node_borrow_mut.head = Some(prev);
                 } else {
-                    node_borrow_mut.head = None;
+                    self.tree = tnode2;
                 }
-            }
 
-            node.borrow_mut().weight += 1;
+                (*tnode2).right = tnode;
+                (*tnode2).left = self.lhead;
 
-            let next_clone = node.borrow_mut().next.clone();
+                (*tnode2).parent = (*self.lhead).parent;
+                (*self.lhead).parent = tnode2;
+                (*tnode).parent = tnode2;
 
-            if let Some(next) = next_clone {
-                let are_weights_equal = node.borrow().weight == next.borrow().weight;
+                self.symbols[byte as usize] = tnode;
 
-                let mut node_borrow_mut = node.borrow_mut();
-                if are_weights_equal {
-                    node_borrow_mut.head = next.borrow().head.clone();
-                } else {
-                    node_borrow_mut.head = None;
-                }
-            }
-
-            let parent_clone = node.borrow().parent.clone();
-
-            if let Some(parent) = parent_clone {
-                self.increment(Some(parent.clone()));
-
-                let prev_clone = node.borrow().prev.clone();
-                let head_clone = node.borrow().head.clone();
-
-                if let Some(prev) = prev_clone {
-                    if Huffman::is_same_node(Some(prev.clone()), Some(parent.clone())) {
-                        self.swap_list(Some(node.clone()), Some(parent.clone()));
-                        if Huffman::is_same_node(head_clone, Some(node.clone())) {
-                            node.borrow_mut().head = Some(parent.clone());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn swap(&mut self, node1: Option<Rc<RefCell<Node>>>, node2: Option<Rc<RefCell<Node>>>) {
-        let node1 = node1.unwrap();
-        let node2 = node2.unwrap();
-
-        let parent1 = node1.borrow_mut().parent.clone();
-        let parent2 = node2.borrow_mut().parent.clone();
-
-        if let Some(parent1) = parent1.clone() {
-            if Huffman::is_same_node(parent1.borrow().left.clone(), Some(node1.clone())) {
-                parent1.borrow_mut().left = Some(node2.clone());
-            } else {
-                parent1.borrow_mut().right = Some(node2.clone());
+                self.increment((*tnode2).parent);
             }
         } else {
-            self.tree = Some(node2.clone());
+            self.increment(self.symbols[byte as usize]);
         }
-
-        if let Some(parent2) = parent2.clone() {
-            if Huffman::is_same_node(parent2.borrow().left.clone(), Some(node2.clone())) {
-                parent2.borrow_mut().left = Some(node1.clone());
-            } else {
-                parent2.borrow_mut().right = Some(node1.clone());
-            }
-        }
-
-        node1.borrow_mut().parent = parent2.clone();
-        node2.borrow_mut().parent = parent1.clone();
     }
 
-    fn swap_list(&mut self, node1: Option<Rc<RefCell<Node>>>, node2: Option<Rc<RefCell<Node>>>) {
-        if node1.is_none() || node2.is_none() {
+    fn increment(&mut self, node: *mut Node) {
+        if node.is_null() {
             return;
         }
 
-        let node1 = node1.unwrap();
-        let node2 = node2.unwrap();
+        unsafe {
+            let mut lnode: *mut Node = std::ptr::null_mut();
 
-        // Clone the next and prev references outside of the mutable borrow scope
-        let node1_next_clone = node1.borrow().next.clone();
-        let node2_next_clone = node2.borrow().next.clone();
-        let node1_prev_clone = node1.borrow().prev.clone();
-        let node2_prev_clone = node2.borrow().prev.clone();
+            if !(*node).next.is_null() && (*(*node).next).weight == (*node).weight {
+                lnode = *(*node).head;
 
-        // Now perform the swaps
-        {
-            if Huffman::is_same_node(Some(node1.clone()), Some(node2.clone())) {
-                let mut node_borrow_mut = node1.borrow_mut();
+                if lnode != (*node).parent {
+                    self.swap(lnode, node);
+                }
 
-                node_borrow_mut.next = node1_next_clone;
-                node_borrow_mut.prev = node1_prev_clone;
-            } else {
-                let mut node1_borrow_mut = node1.borrow_mut();
-                let mut node2_borrow_mut = node2.borrow_mut();
-
-                // Swapping 'next' pointers
-                node1_borrow_mut.next = node2_next_clone;
-                node2_borrow_mut.next = node1_next_clone;
-
-                // Swapping 'prev' pointers
-                node1_borrow_mut.prev = node2_prev_clone;
-                node2_borrow_mut.prev = node1_prev_clone;
+                self.swap_list(lnode, node);
             }
-        }
 
-        // Now handle the conditionals outside the mutable borrow scopes
-        if Huffman::is_same_node(node1.borrow().next.clone(), Some(node1.clone())) {
-            node1.borrow_mut().next = Some(node2.clone());
-        }
-        if Huffman::is_same_node(node2.borrow().next.clone(), Some(node2.clone())) {
-            node2.borrow_mut().next = Some(node1.clone());
-        }
+            if !(*node).prev.is_null() && (*(*node).prev).weight == (*node).weight {
+                (*(*node).head) = (*node).prev;
+            } else {
+                let freed_node = (*node).head;
+                (*node).head = std::ptr::null_mut();
+                self.free_node(freed_node);
+            }
 
-        // Update 'next' pointers' 'prev' references
-        if let Some(next) = node1.clone().borrow().next.clone() {
-            next.borrow_mut().prev = Some(node1.clone());
-        }
-        if let Some(next) = node2.clone().borrow().next.clone() {
-            next.borrow_mut().prev = Some(node2.clone());
-        }
+            (*node).weight += 1;
 
-        // Update 'prev' pointers' 'next' references
-        if let Some(prev) = node1.clone().borrow().prev.clone() {
-            prev.borrow_mut().next = Some(node1.clone());
-        }
-        if let Some(prev) = node2.clone().borrow().prev.clone() {
-            prev.borrow_mut().next = Some(node2.clone());
+            if !(*node).next.is_null() && (*(*node).next).weight == (*node).weight {
+                (*node).head = (*(*node).next).head;
+            } else {
+                (*node).head = self.get_free_pp_node();
+                *(*node).head = node;
+            }
+
+            if !(*node).parent.is_null() {
+                self.increment((*node).parent);
+                if (*node).prev == (*node).parent {
+                    self.swap_list(node, (*node).parent);
+                    if *(*node).head == node {
+                        *(*node).head = (*node).parent;
+                    }
+                }
+            }
         }
     }
 
-    fn is_same_node(node1: Option<Rc<RefCell<Node>>>, node2: Option<Rc<RefCell<Node>>>) -> bool {
-        if node1.is_none() || node2.is_none() {
-            return false;
+    fn swap(&mut self, node1: *mut Node, node2: *mut Node) {
+        unsafe {
+            let par1 = (*node1).parent;
+            let par2 = (*node2).parent;
+
+            if !par1.is_null() {
+                if (*par1).left == node1 {
+                    (*par1).left = node2;
+                } else {
+                    (*par1).right = node2;
+                }
+            } else {
+                self.tree = node2;
+            }
+
+            if !par2.is_null() {
+                if (*par2).left == node2 {
+                    (*par2).left = node1;
+                } else {
+                    (*par2).right = node1;
+                }
+            } else {
+                self.tree = node1;
+            }
+
+            (*node1).parent = par2;
+            (*node2).parent = par1;
         }
+    }
 
-        let node1 = node1.unwrap();
-        let node2 = node2.unwrap();
+    fn swap_list(&mut self, node1: *mut Node, node2: *mut Node) {
+        unsafe {
+            let mut par1 = (*node1).next;
+            (*node1).next = (*node2).next;
+            (*node2).next = par1;
 
-        Rc::ptr_eq(&node1, &node2)
+            par1 = (*node1).prev;
+            (*node1).prev = (*node2).prev;
+            (*node2).prev = par1;
+
+            if ((*node1).next == node1) {
+                (*node1).next = node2;
+            }
+            if ((*node2).next == node2) {
+                (*node2).next = node1;
+            }
+            if (!(*node1).next.is_null()) {
+                (*(*node1).next).prev = node1;
+            }
+            if (!(*node2).next.is_null()) {
+                (*(*node2).next).prev = node2;
+            }
+            if (!(*node1).prev.is_null()) {
+                (*(*node1).prev).next = node1;
+            }
+            if (!(*node2).prev.is_null()) {
+                (*(*node2).prev).next = node2;
+            }
+        }
     }
 }
